@@ -125,16 +125,16 @@ type Report struct {
 func (r Report) Violations() []string {
 	var v []string
 	if r.Oversold > 0 {
-		v = append(v, "oversold by " + humanInt(r.Oversold))
+		v = append(v, "oversold by "+humanInt(r.Oversold))
 	}
 	if r.CounterDrift != 0 {
-		v = append(v, "counter drift " + signed(r.CounterDrift))
+		v = append(v, "counter drift "+signed(r.CounterDrift))
 	}
 	if r.Purchased != r.TicketsIssued {
-		v = append(v, humanInt(r.Purchased) + " successes but " + humanInt(r.TicketsIssued) + " tickets")
+		v = append(v, humanInt(r.Purchased)+" successes but "+humanInt(r.TicketsIssued)+" tickets")
 	}
 	if r.Unsold > 0 {
-		v = append(v, humanInt(r.Unsold) + " seats left unsold despite demand")
+		v = append(v, humanInt(r.Unsold)+" seats left unsold despite demand")
 	}
 	return v
 }
