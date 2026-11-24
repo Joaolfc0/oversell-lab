@@ -5,6 +5,10 @@
 //	POST /events/{id}/purchase?strategy=atomic
 //	     Idempotency-Key: <uuid>     (required)
 //	     {"buyer_id":"alice"}
+//
+//	GET  /                           live dashboard
+//	GET  /api/run?strategies=naive,atomic&capacity=1000&buyers=10000&dup=0.1
+//	                                 runs a flash sale, streams progress (SSE)
 package main
 
 import (
@@ -63,8 +67,19 @@ func run() error {
 		strategies[name] = s
 	}
 
+	// A tiny separate pool lets the dashboard read live stats while the main
+	// pool is saturated by thousands of buyers.
+	monitor, err := store.Connect(ctx, env("DATABASE_URL", "postgres://oversell:oversell@localhost:54329/oversell?sslmode=disable"), 2)
+	if err != nil {
+		return err
+	}
+	defer monitor.Close()
+
 	a := &api{db: db, strategies: strategies, fallback: env("DEFAULT_STRATEGY", "atomic")}
+	d := &dashboard{db: db, monitor: monitor, strategies: strategies}
 	mux := http.NewServeMux()
+	mux.Handle("GET /", d.static())
+	mux.HandleFunc("GET /api/run", d.run)
 	mux.HandleFunc("POST /events", a.createEvent)
 	mux.HandleFunc("GET /events/{id}", a.getEvent)
 	mux.HandleFunc("POST /events/{id}/purchase", a.purchase)

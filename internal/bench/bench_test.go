@@ -36,7 +36,7 @@ func TestViolations(t *testing.T) {
 }
 
 func TestHumanInt(t *testing.T) {
-	for in, want := range map[int]string{0: "0", 999: "999", 1000: "1,000", 1234567: "1,234,567"} {
+	for in, want := range map[int]string{0: "0", 999: "999", 1000: "1,000", 1234567: "1,234,567", -2999: "-2,999"} {
 		if got := humanInt(in); got != want {
 			t.Errorf("humanInt(%d) = %q, want %q", in, got, want)
 		}

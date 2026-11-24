@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oversell Lab</title>
+<meta name="description" content="Watch six concurrency strategies sell the same concert, live.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #F3F4F8;
+  --paper-raised: #FFFFFF;
+  --ink: #1B2140;
+  --ink-soft: #5B6178;
+  --rule: #D4D7E3;
+  --seat-empty: #D9DCE8;
+  --seat-sold: #2F4BD8;
+  --seat-over: #D61F5A;
+  --ok: #1E7F55;
+  --focus: #2F4BD8;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #12152A;
+    --paper-raised: #1A1E38;
+    --ink: #E8EAF5;
+    --ink-soft: #9AA0BD;
+    --rule: #2C3154;
+    --seat-empty: #2A2F52;
+    --seat-sold: #6F86FF;
+    --seat-over: #FF4F86;
+    --ok: #4CC793;
+    --focus: #8FA2FF;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #12152A; --paper-raised: #1A1E38; --ink: #E8EAF5; --ink-soft: #9AA0BD;
+  --rule: #2C3154; --seat-empty: #2A2F52; --seat-sold: #6F86FF; --seat-over: #FF4F86;
+  --ok: #4CC793; --focus: #8FA2FF; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Archivo", system-ui, sans-serif;
+  font-variation-settings: "wdth" 100;
+  font-size: 16px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ---------- headline ---------- */
+.top { padding: 56px 0 28px; }
+h1 {
+  margin: 0;
+  font-weight: 850;
+  font-variation-settings: "wdth" 125;
+  font-size: clamp(2rem, 5.4vw, 4.1rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  max-width: 16ch;
+}
+.lede { margin: 18px 0 0; color: var(--ink-soft); max-width: 62ch; font-size: 1.06rem; }
+.lede a { color: inherit; }
+
+/* ---------- controls ---------- */
+form.controls {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px 28px;
+  align-items: end;
+  padding: 22px 0 26px;
+  border-top: 2px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
+}
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend, .field label { font-size: .85rem; color: var(--ink-soft); padding: 0; margin-bottom: 8px; display: block; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill input { position: absolute; opacity: 0; pointer-events: none; }
+.pill span {
+  display: inline-block; padding: 6px 14px; border-radius: 999px;
+  border: 1.5px solid var(--rule); cursor: pointer; font-weight: 600;
+  user-select: none;
+}
+.pill input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.pill input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.numbers { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 18px; }
+.field input {
+  width: 8.5rem; font: inherit; font-weight: 600; color: var(--ink);
+  background: var(--paper-raised); border: 1.5px solid var(--rule); border-radius: 6px; padding: 7px 10px;
+}
+.actions { display: flex; gap: 10px; }
+button {
+  font: inherit; font-weight: 750; font-variation-settings: "wdth" 112;
+  border-radius: 6px; padding: 12px 22px; cursor: pointer; border: 2px solid var(--ink);
+}
+button.primary { background: var(--ink); color: var(--paper); }
+button.secondary { background: transparent; color: var(--ink); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.message { grid-column: 1 / -1; margin: 0; color: var(--seat-over); font-weight: 600; min-height: 0; }
+.message:empty { display: none; }
+
+/* ---------- legend ---------- */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 16px 0 6px; color: var(--ink-soft); font-size: .9rem; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+
+/* ---------- lanes ---------- */
+.lane { padding: 26px 0 28px; border-bottom: 1px solid var(--rule); }
+.lane[hidden] { display: none; }
+.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 14px; }
+.lane h2 {
+  margin: 0; font-size: 1.55rem; font-weight: 800; font-variation-settings: "wdth" 118; letter-spacing: -0.01em;
+}
+.lane .how { color: var(--ink-soft); flex: 1 1 26ch; }
+.status { font-weight: 700; }
+.status.broken { color: var(--seat-over); }
+.status.correct { color: var(--ok); }
+.status.idle { color: var(--ink-soft); font-weight: 500; }
+.lane-body { display: grid; grid-template-columns: minmax(0, 1fr) 15rem; gap: 26px; align-items: start; }
+.map { position: relative; min-width: 0; }
+.map canvas { display: block; width: 100%; }
+.wall-label { position: absolute; right: 0; font-size: .8rem; color: var(--seat-over); font-weight: 650; transform: translateY(-50%); background: var(--paper); padding-left: 8px; }
+.meter { height: 2px; background: var(--rule); margin-top: 14px; border-radius: 2px; overflow: hidden; }
+.meter b { display: block; height: 100%; width: 0; background: var(--ink-soft); transition: width .12s linear; }
+.lane.finished .meter { visibility: hidden; }
+dl.stats { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; font-size: .94rem; }
+dl.stats dt { color: var(--ink-soft); }
+dl.stats dd { margin: 0; text-align: right; font-weight: 650; }
+dl.stats dd.bad { color: var(--seat-over); }
+dl.stats .big { font-size: 1.5rem; font-weight: 800; font-variation-settings: "wdth" 110; line-height: 1.1; }
+.violations { margin: 12px 0 0; color: var(--seat-over); font-size: .92rem; }
+.violations:empty { display: none; }
+
+/* ---------- results ---------- */
+.results { padding: 40px 0 64px; }
+.results h2 { font-size: 1.9rem; font-weight: 850; font-variation-settings: "wdth" 122; margin: 0 0 6px; letter-spacing: -0.015em; }
+.results p { color: var(--ink-soft); margin: 0 0 18px; max-width: 64ch; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 720px; font-size: .95rem; }
+th { text-align: left; font-weight: 600; color: var(--ink-soft); padding: 8px 10px; border-bottom: 2px solid var(--ink); }
+td { padding: 11px 10px; border-bottom: 1px solid var(--rule); }
+td.num, th.num { text-align: right; }
+td .name { font-weight: 750; }
+.bar { display: flex; align-items: center; gap: 10px; min-width: 200px; }
+.bar i { display: block; height: 10px; background: var(--seat-sold); border-radius: 2px; }
+.verdict-bad { color: var(--seat-over); font-weight: 700; }
+.verdict-ok { color: var(--ok); font-weight: 700; }
+.empty-results { color: var(--ink-soft); }
+
+footer { color: var(--ink-soft); font-size: .88rem; padding: 0 0 48px; }
+footer a { color: inherit; }
+
+@media (max-width: 760px) {
+  .top { padding-top: 36px; }
+  form.controls { grid-template-columns: 1fr; }
+  .lane-body { grid-template-columns: 1fr; }
+  .field input { width: 7rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meter b { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <h1 id="headline">1,000 seats. 10,000 buyers. One moment.</h1>
+    <p class="lede">
+      Every buyer clicks at the same instant. Each strategy below sells the same concert, and the seat map
+      shows what Postgres actually contains while it happens. Seats in red were sold to people who will
+      not have a seat.
+      <a href="https://github.com/Joaolfc0/oversell-lab">How each strategy works</a>.
+    </p>
+  </header>
+
+  <form class="controls" id="controls">
+    <div>
+      <fieldset>
+        <legend>Strategies to run, in order</legend>
+        <div class="pills" id="pills"></div>
+      </fieldset>
+      <div class="numbers">
+        <div class="field"><label for="capacity">Seats</label><input id="capacity" type="number" min="1" max="5000" value="1000" required></div>
+        <div class="field"><label for="buyers">Buyers</label><input id="buyers" type="number" min="1" max="20000" value="10000" required></div>
+        <div class="field"><label for="dup">Double-clickers (%)</label><input id="dup" type="number" min="0" max="100" value="10" required></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary" id="start">Start the sale</button>
+      <button type="button" class="secondary" id="stop" disabled>Stop</button>
+    </div>
+    <p class="message" id="message" role="alert"></p>
+  </form>
+
+  <div class="legend" aria-hidden="true">
+    <span><i style="background:var(--seat-sold)"></i>Ticket issued</span>
+    <span><i style="background:var(--seat-empty)"></i>Seat still free</span>
+    <span><i style="background:var(--seat-over)"></i>Ticket for a seat that does not exist</span>
+  </div>
+
+  <div id="lanes"></div>
+
+  <section class="results" aria-labelledby="results-title">
+    <h2 id="results-title">Results</h2>
+    <p>Checked against the database after each run: no extra tickets, counter equal to tickets, and no seats left over while people were still trying to buy.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Strategy</th><th>Verdict</th><th class="num">Tickets / seats</th><th class="num">Oversold</th>
+          <th class="num">Counter drift</th><th class="num">Retries</th><th>Throughput</th><th class="num">p50</th><th class="num">p99</th>
+        </tr></thead>
+        <tbody id="results"><tr><td colspan="9" class="empty-results">Start a sale to fill this table.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Go, Postgres 17 and Redis 7. Source and benchmarks on <a href="https://github.com/Joaolfc0/oversell-lab">GitHub</a>.</footer>
+</main>
+
+<template id="lane-tpl">
+  <section class="lane">
+    <div class="lane-head">
+      <h2></h2>
+      <span class="how"></span>
+      <span class="status idle">Waiting</span>
+    </div>
+    <div class="lane-body">
+      <div>
+        <div class="map"><canvas role="img"></canvas><span class="wall-label" hidden>Venue full</span></div>
+        <div class="meter" aria-hidden="true"><b></b></div>
+      </div>
+      <div>
+        <dl class="stats">
+          <dt>Tickets in database</dt><dd class="big" data-k="tickets">0</dd>
+          <dt>Beyond capacity</dt><dd data-k="oversold">0</dd>
+          <dt>Counter says</dt><dd data-k="counter">0</dd>
+          <dt>Told "sold out"</dt><dd data-k="soldout">0</dd>
+          <dt>Double clicks</dt><dd data-k="dups">0</dd>
+          <dt>Retries</dt><dd data-k="retries">0</dd>
+          <dt>Requests answered</dt><dd data-k="done">0</dd>
+        </dl>
+        <p class="violations"></p>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script>
+(() => {
+  "use strict";
+
+  const STRATEGIES = [
+    ["naive", "Reads the count, checks it, then writes. Nothing stops two buyers reading the same count."],
+    ["pessimistic", "Locks the event row, so purchases run one at a time."],
+    ["optimistic", "Writes only if nobody changed the row since it was read. Otherwise it retries."],
+    ["atomic", "Checks and takes a seat in one UPDATE statement."],
+    ["redis", "A Redis script hands out seats before Postgres is touched."],
+    ["queue", "A single worker handles purchases one after another."],
+  ];
+
+  const $ = (s, el = document) => el.querySelector(s);
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+  const ms = (ns) => (ns / 1e6 >= 1000 ? (ns / 1e9).toFixed(1) + " s" : Math.round(ns / 1e6) + " ms");
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  const form = $("#controls"), pills = $("#pills"), lanesEl = $("#lanes");
+  const startBtn = $("#start"), stopBtn = $("#stop"), message = $("#message");
+  const inputs = { capacity: $("#capacity"), buyers: $("#buyers"), dup: $("#dup") };
+  const lanes = new Map();
+  let reports = [];
+  let controller = null;
+
+  // ---------- build controls and lanes ----------
+  for (const [name, how] of STRATEGIES) {
+    const label = document.createElement("label");
+    label.className = "pill";
+    label.innerHTML = `<input type="checkbox" value="${name}" checked><span>${name}</span>`;
+    pills.append(label);
+
+    const node = $("#lane-tpl").content.firstElementChild.cloneNode(true);
+    $("h2", node).textContent = name;
+    $(".how", node).textContent = how;
+    lanesEl.append(node);
+    lanes.set(name, {
+      node, canvas: $("canvas", node), wall: $(".wall-label", node), meter: $(".meter b", node),
+      status: $(".status", node), violations: $(".violations", node),
+      stat: Object.fromEntries([...node.querySelectorAll("dd")].map((d) => [d.dataset.k, d])),
+      state: null,
+    });
+  }
+
+  const selected = () => [...pills.querySelectorAll("input:checked")].map((i) => i.value);
+
+  function updateHeadline() {
+    const c = +inputs.capacity.value || 0, b = +inputs.buyers.value || 0;
+    $("#headline").textContent = `${fmt(c)} seats. ${fmt(b)} buyers. One moment.`;
+  }
+  function syncLaneVisibility() {
+    const on = new Set(selected());
+    for (const [name, lane] of lanes) lane.node.hidden = !on.has(name);
+  }
+  Object.values(inputs).forEach((i) => i.addEventListener("input", () => { updateHeadline(); resetLanes(); }));
+  pills.addEventListener("change", syncLaneVisibility);
+
+  // ---------- seat map ----------
+  function geometry(width, capacity) {
+    const cell = capacity <= 1500 ? 7 : capacity <= 3000 ? 5 : 4;
+    const gap = cell >= 7 ? 2 : 1;
+    const pitch = cell + gap;
+    const cols = Math.max(1, Math.floor((width + gap) / pitch));
+    return { cell, pitch, cols, venueRows: Math.ceil(capacity / cols) };
+  }
+
+  function draw(lane) {
+    const s = lane.state;
+    if (!s) return;
+    const width = lane.canvas.parentElement.clientWidth;
+    const g = geometry(width, s.capacity);
+    const over = Math.max(0, s.tickets - s.capacity);
+    const overRows = Math.ceil(over / g.cols);
+    const wallGap = over > 0 ? 3 : 0; // rows of space for the "wall"
+    const rows = g.venueRows + wallGap + overRows;
+    const height = Math.max(g.pitch, rows * g.pitch - (g.pitch - g.cell));
+    const dpr = window.devicePixelRatio || 1;
+
+    const c = lane.canvas;
+    if (c.width !== Math.round(width * dpr) || c.height !== Math.round(height * dpr)) {
+      c.width = Math.round(width * dpr);
+      c.height = Math.round(height * dpr);
+      c.style.height = height + "px";
+    }
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const sold = Math.min(s.tickets, s.capacity);
+    const empty = css("--seat-empty"), soldC = css("--seat-sold"), overC = css("--seat-over");
+    for (let i = 0; i < s.capacity; i++) {
+      ctx.fillStyle = i < sold ? soldC : empty;
+      ctx.fillRect((i % g.cols) * g.pitch, Math.floor(i / g.cols) * g.pitch, g.cell, g.cell);
+    }
+    if (over > 0) {
+      const wallY = g.venueRows * g.pitch + (wallGap * g.pitch) / 2 - g.pitch / 2;
+      ctx.fillStyle = overC;
+      ctx.fillRect(0, wallY, width, 2);
+      const top = (g.venueRows + wallGap) * g.pitch;
+      for (let j = 0; j < over; j++) {
+        ctx.fillRect((j % g.cols) * g.pitch, top + Math.floor(j / g.cols) * g.pitch, g.cell, g.cell);
+      }
+      lane.wall.hidden = false;
+      lane.wall.style.top = wallY + 1 + "px";
+      lane.wall.textContent = `Venue full: ${fmt(over)} more tickets sold`;
+    } else {
+      lane.wall.hidden = true;
+    }
+    c.setAttribute("aria-label",
+      `${fmt(s.tickets)} tickets issued for ${fmt(s.capacity)} seats` + (over ? `, ${fmt(over)} beyond capacity` : ""));
+  }
+
+  let frame = 0;
+  const dirty = new Set();
+  function schedule(lane) {
+    dirty.add(lane);
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; dirty.forEach(draw); dirty.clear(); });
+  }
+  window.addEventListener("resize", () => lanes.forEach(schedule));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => lanes.forEach(schedule));
+
+  // ---------- lane state ----------
+  function setStat(lane, key, value, bad = false) {
+    lane.stat[key].textContent = fmt(value);
+    lane.stat[key].classList.toggle("bad", bad);
+  }
+  function setStatus(lane, text, kind) {
+    lane.status.textContent = text;
+    lane.status.className = "status " + kind;
+  }
+  function resetLane(lane, capacity) {
+    lane.state = { capacity, tickets: 0 };
+    lane.node.classList.remove("finished");
+    lane.meter.style.width = "0";
+    lane.violations.textContent = "";
+    for (const k of Object.keys(lane.stat)) setStat(lane, k, 0);
+    setStatus(lane, "Waiting", "idle");
+    schedule(lane);
+  }
+  function resetLanes() {
+    if (controller) return;
+    const cap = +inputs.capacity.value || 1;
+    lanes.forEach((l) => resetLane(l, cap));
+  }
+
+  function onStart(d) {
+    const lane = lanes.get(d.strategy);
+    resetLane(lane, d.capacity);
+    setStatus(lane, "Selling", "idle");
+    lane.node.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
+  }
+  function onProgress(p) {
+    const lane = lanes.get(p.strategy);
+    const s = lane.state;
+    s.tickets = p.tickets;
+    const over = Math.max(0, p.tickets - s.capacity);
+    setStat(lane, "tickets", p.tickets, over > 0);
+    setStat(lane, "oversold", over, over > 0);
+    setStat(lane, "counter", p.counter, p.counter !== p.tickets && p.done === p.requests);
+    setStat(lane, "soldout", p.sold_out);
+    setStat(lane, "dups", p.duplicates);
+    setStat(lane, "retries", p.retries);
+    lane.stat.done.textContent = `${fmt(p.done)} / ${fmt(p.requests)}`;
+    lane.meter.style.width = (100 * p.done / Math.max(1, p.requests)).toFixed(1) + "%";
+    setStatus(lane, `Selling for ${(p.elapsed_ms / 1000).toFixed(1)} s`, over > 0 ? "broken" : "idle");
+    schedule(lane);
+  }
+  function onReport(r) {
+    const lane = lanes.get(r.strategy);
+    lane.node.classList.add("finished");
+    lane.state.tickets = r.tickets_issued;
+    setStat(lane, "counter", r.counter, r.counter_drift !== 0);
+    if (r.correct) {
+      setStatus(lane, `Correct in ${(r.duration_ns / 1e9).toFixed(1)} s`, "correct");
+    } else {
+      setStatus(lane, "Broken", "broken");
+      lane.violations.textContent = sentence(r.violations);
+    }
+    schedule(lane);
+    reports = reports.filter((x) => x.strategy !== r.strategy).concat(r);
+    renderResults();
+  }
+  function sentence(list) {
+    const s = list.join("; ");
+    return s.charAt(0).toUpperCase() + s.slice(1) + ".";
+  }
+
+  function renderResults() {
+    const body = $("#results");
+    if (!reports.length) {
+      body.innerHTML = `<tr><td colspan="9" class="empty-results">Start a sale to fill this table.</td></tr>`;
+      return;
+    }
+    const best = Math.max(...reports.map((r) => r.throughput_rps));
+    body.replaceChildren(...reports.map((r) => {
+      const tr = document.createElement("tr");
+      const pct = Math.max(2, (100 * r.throughput_rps) / best);
+      tr.innerHTML = `
+        <td><span class="name">${r.strategy}</span></td>
+        <td class="${r.correct ? "verdict-ok" : "verdict-bad"}">${r.correct ? "Correct" : "Broken"}</td>
+        <td class="num">${fmt(r.tickets_issued)} / ${fmt(r.capacity)}</td>
+        <td class="num">${fmt(r.oversold)}</td>
+        <td class="num">${r.counter_drift > 0 ? "+" : ""}${fmt(r.counter_drift)}</td>
+        <td class="num">${fmt(r.retries)}</td>
+        <td><div class="bar"><i style="width:${pct}%"></i><span>${fmt(Math.round(r.throughput_rps))}/s</span></div></td>
+        <td class="num">${ms(r.p50_ns)}</td>
+        <td class="num">${ms(r.p99_ns)}</td>`;
+      return tr;
+    }));
+  }
+
+  // ---------- running a sale ----------
+  function setRunning(on) {
+    startBtn.disabled = on;
+    stopBtn.disabled = !on;
+    form.querySelectorAll("input").forEach((i) => (i.disabled = on));
+    startBtn.textContent = on ? "Selling" : "Start the sale";
+  }
+
+  async function runSale() {
+    const names = selected();
+    if (!names.length) { message.textContent = "Pick at least one strategy."; return; }
+    if (!form.reportValidity()) return;
+    message.textContent = "";
+    reports = [];
+    renderResults();
+    resetLanes();
+    controller = new AbortController();
+    setRunning(true);
+
+    const q = new URLSearchParams({
+      strategies: names.join(","), capacity: inputs.capacity.value,
+      buyers: inputs.buyers.value, dup: String(+inputs.dup.value / 100),
+    });
+    try {
+      const res = await fetch("/api/run?" + q, { signal: controller.signal });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `The server answered ${res.status}.`);
+      }
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let cut;
+        while ((cut = buf.indexOf("\n\n")) >= 0) {
+          handle(buf.slice(0, cut));
+          buf = buf.slice(cut + 2);
+        }
+      }
+    } catch (err) {
+      if (err.name === "AbortError") message.textContent = "Sale stopped. Lanes show where each strategy was.";
+      else message.textContent = err.message.startsWith("Failed to fetch")
+        ? "Cannot reach the server. Check that it is running." : err.message;
+    } finally {
+      controller = null;
+      setRunning(false);
+    }
+  }
+
+  function handle(block) {
+    let event = "message", data = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event: ")) event = line.slice(7);
+      else if (line.startsWith("data: ")) data += line.slice(6);
+    }
+    const d = data ? JSON.parse(data) : {};
+    if (event === "start") onStart(d);
+    else if (event === "progress") onProgress(d);
+    else if (event === "report") onReport(d);
+    else if (event === "failure") {
+      message.textContent = `${d.strategy} failed: ${d.message}`;
+      const lane = lanes.get(d.strategy);
+      if (lane) setStatus(lane, "Failed", "broken");
+    }
+  }
+
+  form.addEventListener("submit", (e) => { e.preventDefault(); runSale(); });
+  stopBtn.addEventListener("click", () => controller && controller.abort());
+
+  updateHeadline();
+  syncLaneVisibility();
+  resetLanes();
+})();
+</script>
+</body>
+</html>

@@ -12,6 +12,10 @@ With the code most people write first: **10,000**.
 
 This repository implements the same "buy a ticket" operation **six ways**, fires the same flash sale at each one, and then **checks the database** to see which ones kept their promises.
 
+![Live dashboard: the naive strategy issues 3,000 tickets for 300 seats, then atomic and redis sell exactly 300](docs/img/demo.gif)
+
+<sub>The [live dashboard](#live-dashboard) reading Postgres while 3,000 buyers compete for 300 seats. Red squares are tickets for seats that do not exist.</sub>
+
 ```
 | Strategy      | Correct | Tickets / Capacity | Oversold | Throughput  |
 |---------------|:-------:|-------------------:|---------:|------------:|
@@ -31,6 +35,7 @@ This repository implements the same "buy a ticket" operation **six ways**, fires
 
 - [The bug](#the-bug)
 - [Quick start](#quick-start)
+- [Live dashboard](#live-dashboard)
 - [The six strategies](#the-six-strategies)
 - [Idempotency: retries and double clicks](#idempotency-retries-and-double-clicks)
 - [Results](#results)
@@ -107,6 +112,30 @@ TEST_REDIS_URL='redis://localhost:63799/0' go test -race ./...
 ```
 
 There is also a `Makefile` (`make up`, `make test`, `make bench`, `make server`).
+
+---
+
+## Live dashboard
+
+```bash
+docker compose up -d --wait
+go run ./cmd/server          # then open http://localhost:8080
+```
+
+Choose the strategies, the number of seats and buyers, and how many of them double-click, then start the sale. For each strategy you see:
+
+- **A seat map that reads Postgres, not the application.** Every 80 ms a separate two-connection pool counts the ticket rows, so the map shows what the database really contains. Tickets beyond capacity spill past the "venue wall" in red.
+- **Live counters**: tickets in the database, what the `sold` counter says (in `naive` it stays near 1 while thousands of tickets pile up), sold-out answers, double clicks caught and retries.
+- **A verdict once the run finishes**, from the same invariant checks the CLI uses.
+
+![Results table from the dashboard: every strategy except naive sells exactly 300 of 300 seats](docs/img/results.png)
+
+How it works:
+
+- `GET /api/run` streams the sale as **Server-Sent Events** (`start`, `progress`, `report`, `done`). Closing the tab cancels the request context, which stops the run.
+- The page is one HTML file **embedded in the Go binary** (`go:embed`): no Node, no build step, no front-end dependencies. The seat map is drawn on a `<canvas>`, so 10,000 squares cost nothing.
+- Only one sale runs at a time (a `TryLock`, otherwise `409`), and inputs are capped, so a single visitor cannot occupy the database for minutes.
+- Monitoring uses its **own small pool** on purpose. During a sale the main pool has thousands of goroutines queued on it, and a stats query sent through it would only run after the sale was over.
 
 ---
 
@@ -333,12 +362,14 @@ curl localhost:8080/events/42
 ```
 cmd/
   bench/            load generator: runs strategies, verifies invariants, prints the table
-  server/           HTTP API over the same strategies
+  server/           HTTP API + live dashboard (SSE)
+    web/            the dashboard: one HTML file, embedded with go:embed
 internal/
   strategy/         the six implementations, plus integration tests
   bench/            barrier-synchronised load runner, percentiles, report
   store/            pgx pool, schema, invariant queries
 docs/adr/           architecture decision records
+docs/img/           dashboard recording and screenshot
 docker-compose.yml  Postgres 17 + Redis 7
 ```
 
@@ -368,7 +399,7 @@ Built with the standard library plus [`pgx`](https://github.com/jackc/pgx) and [
 
 ### Roadmap
 
-- [ ] Live dashboard: watch the race happen, with charts per strategy
+- [x] Live dashboard: watch the race happen, strategy by strategy
 - [ ] Reservation + TTL strategy
 - [ ] Sharded-counter strategy
 - [ ] Multi-replica run showing the `queue` strategy breaking across processes

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +32,61 @@ type Config struct {
 	DuplicateRate float64
 	Seed          uint64
 	Timeout       time.Duration
+
+	// OnProgress, if set, is called about every ProgressEvery with a live
+	// snapshot, and once more when the run finishes.
+	OnProgress    func(Progress)
+	ProgressEvery time.Duration
+	// Monitor is the pool used to read live stats while the run is in
+	// progress. Use a separate small pool: the main one is saturated by the
+	// buyers, and a stats query would wait in line behind thousands of them.
+	// Defaults to the main pool.
+	Monitor *pgxpool.Pool
+}
+
+// Progress is a live snapshot taken during a run.
+type Progress struct {
+	Strategy   string `json:"strategy"`
+	ElapsedMs  int64  `json:"elapsed_ms"`
+	Requests   int    `json:"requests"`
+	Done       int64  `json:"done"`
+	Purchased  int64  `json:"purchased"`
+	Duplicates int64  `json:"duplicates"`
+	SoldOut    int64  `json:"sold_out"`
+	Errors     int64  `json:"errors"`
+	Retries    int64  `json:"retries"`
+	// Tickets and Counter are read from Postgres, so they show what the
+	// database really holds, not what callers were told.
+	Tickets int `json:"tickets"`
+	Counter int `json:"counter"`
+}
+
+type liveCounters struct {
+	done, purchased, duplicates, soldOut, errors, retries atomic.Int64
+}
+
+func (c *liveCounters) record(res strategy.Result, err error) {
+	c.retries.Add(int64(res.Retries))
+	switch {
+	case err != nil:
+		c.errors.Add(1)
+	case res.Outcome == strategy.Purchased:
+		c.purchased.Add(1)
+	case res.Outcome == strategy.Duplicate:
+		c.duplicates.Add(1)
+	case res.Outcome == strategy.SoldOut:
+		c.soldOut.Add(1)
+	}
+	c.done.Add(1)
+}
+
+func (c *liveCounters) snapshot(name string, requests int, elapsed time.Duration, st store.EventStats) Progress {
+	return Progress{
+		Strategy: name, ElapsedMs: elapsed.Milliseconds(), Requests: requests,
+		Done: c.done.Load(), Purchased: c.purchased.Load(), Duplicates: c.duplicates.Load(),
+		SoldOut: c.soldOut.Load(), Errors: c.errors.Load(), Retries: c.retries.Load(),
+		Tickets: st.Tickets, Counter: st.Sold,
+	}
 }
 
 // Report is the outcome of one run.
@@ -69,16 +125,16 @@ type Report struct {
 func (r Report) Violations() []string {
 	var v []string
 	if r.Oversold > 0 {
-		v = append(v, fmt.Sprintf("oversold by %d", r.Oversold))
+		v = append(v, "oversold by " + humanInt(r.Oversold))
 	}
 	if r.CounterDrift != 0 {
-		v = append(v, fmt.Sprintf("counter drift %+d", r.CounterDrift))
+		v = append(v, "counter drift " + signed(r.CounterDrift))
 	}
 	if r.Purchased != r.TicketsIssued {
-		v = append(v, fmt.Sprintf("%d successes but %d tickets", r.Purchased, r.TicketsIssued))
+		v = append(v, humanInt(r.Purchased) + " successes but " + humanInt(r.TicketsIssued) + " tickets")
 	}
 	if r.Unsold > 0 {
-		v = append(v, fmt.Sprintf("%d seats left unsold despite demand", r.Unsold))
+		v = append(v, humanInt(r.Unsold) + " seats left unsold despite demand")
 	}
 	return v
 }
@@ -125,6 +181,7 @@ func Run(ctx context.Context, db *pgxpool.Pool, s strategy.Strategy, cfg Config)
 	rng.Shuffle(len(reqs), func(i, j int) { reqs[i], reqs[j] = reqs[j], reqs[i] })
 
 	samples := make([]sample, len(reqs))
+	var live liveCounters
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, r := range reqs {
@@ -133,16 +190,54 @@ func Run(ctx context.Context, db *pgxpool.Pool, s strategy.Strategy, cfg Config)
 			t0 := time.Now()
 			res, err := s.Purchase(ctx, r)
 			samples[i] = sample{res: res, err: err, latency: time.Since(t0)}
+			live.record(res, err)
 		})
 	}
+
+	monitor := cfg.Monitor
+	if monitor == nil {
+		monitor = db
+	}
+	every := cfg.ProgressEvery
+	if every <= 0 {
+		every = 100 * time.Millisecond
+	}
+	stopProgress := make(chan struct{})
+	progressDone := make(chan struct{})
 	t0 := time.Now()
+	if cfg.OnProgress != nil {
+		go func() {
+			defer close(progressDone)
+			tick := time.NewTicker(every)
+			defer tick.Stop()
+			for {
+				select {
+				case <-stopProgress:
+					return
+				case <-tick.C:
+					qctx, cancel := context.WithTimeout(ctx, every)
+					st, _ := store.Stats(qctx, monitor, cfg.EventID) // best effort
+					cancel()
+					cfg.OnProgress(live.snapshot(s.Name(), len(reqs), time.Since(t0), st))
+				}
+			}
+		}()
+	} else {
+		close(progressDone)
+	}
+
 	close(start)
 	wg.Wait()
 	elapsed := time.Since(t0)
+	close(stopProgress)
+	<-progressDone
 
 	stats, err := store.Stats(context.WithoutCancel(ctx), db, cfg.EventID)
 	if err != nil {
 		return Report{}, fmt.Errorf("read stats: %w", err)
+	}
+	if cfg.OnProgress != nil {
+		cfg.OnProgress(live.snapshot(s.Name(), len(reqs), elapsed, stats))
 	}
 
 	rep := Report{
@@ -236,7 +331,17 @@ func ms(d time.Duration) string {
 	return fmt.Sprintf("%.1f ms", float64(d.Microseconds())/1000)
 }
 
+func signed(n int) string {
+	if n > 0 {
+		return "+" + humanInt(n)
+	}
+	return humanInt(n)
+}
+
 func humanInt(n int) string {
+	if n < 0 {
+		return "-" + humanInt(-n)
+	}
 	s := fmt.Sprint(n)
 	var b strings.Builder
 	for i, c := range s {
