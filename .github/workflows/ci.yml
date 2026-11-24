@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: oversell
+          POSTGRES_PASSWORD: oversell
+          POSTGRES_DB: oversell
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oversell"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 2s --health-retries 20
+    env:
+      DATABASE_URL: postgres://oversell:oversell@localhost:5432/oversell?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+      TEST_DATABASE_URL: postgres://oversell:oversell@localhost:5432/oversell?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: vet
+        run: go vet ./...
+      - name: test (race detector on)
+        run: go test -race -count=1 ./...
+      - name: benchmark smoke run
+        run: |
+          go run ./cmd/bench -strategy all -capacity 200 -buyers 2000 | tee -a "$GITHUB_STEP_SUMMARY"
